@@ -1,6 +1,6 @@
 # Установка на VPS: go.its-403.ru
 
-Инструкция для Ubuntu/Debian с systemd и уже установленным Nginx. На других дистрибутивах пути конфигурации Nginx и установка Certbot могут отличаться.
+Инструкция для Ubuntu/Debian с уже установленными PM2 и Nginx. Проект остаётся в `/root/stydy-flow`, команды на VPS выполняются от root в том же PM2, где уже работают остальные приложения. На других дистрибутивах пути конфигурации Nginx и установка Certbot могут отличаться.
 
 Схема: **браузер → HTTPS Nginx → 127.0.0.1:3007 → Express (frontend + API) → SQLite**. Vite в production не запускается. PostgreSQL для текущего проекта не используется. Другие приложения продолжают работать на своих портах и доменах.
 
@@ -10,36 +10,34 @@
 node --version
 npm --version
 command -v node
-sudo ss -ltnp 'sport = :3007'
-sudo nginx -T 2>/dev/null | rg 'server_name.*go\.its-403\.ru'
+ss -ltnp 'sport = :3007'
+nginx -T 2>/dev/null | rg 'server_name.*go\.its-403\.ru'
 ```
 
 Если `rg` не установлен, используйте `grep`. Порт 3007 должен быть свободен. Нужен Node.js 22.12+; подходит Node.js 24 LTS. Не меняйте глобальную версию Node для других работающих сервисов без проверки их совместимости.
 
-В unit-файле ниже используется `/usr/bin/node`. Если Node находится по другому пути, исправьте `ExecStart`. Для установки через nvm в домашней директории нужен отдельный доступный сервису Node, например в `/opt/node/bin/node`: unit использует `ProtectHome=true`.
+Проверьте `pm2 ls`: должны быть видны уже работающие сервисы. Не устанавливайте второй PM2 и не меняйте `PM2_HOME`. Если сервисы работают под другим пользователем, его PM2 и PM2 root — разные списки процессов.
 
 DNS-запись A `go.its-403.ru` должна указывать на публичный IPv4 VPS. Если есть AAAA, IPv6 также должен вести на этот VPS. В сетевом firewall должны быть доступны 80 и 443; порт 3007 слушает только loopback.
 
 ## 2. Скачать и собрать проект
 
-Команды выполняет обычный пользователь сервера с sudo. Замените URL репозитория своим. Для приватного репозитория используйте уже настроенный SSH-доступ.
+Проект уже клонирован в `/root/stydy-flow`:
 
 ```bash
-sudo useradd --system --user-group --home-dir /var/lib/studyflow --shell /usr/sbin/nologin studyflow
-sudo install -d -o "$USER" -g "$(id -gn)" -m 755 /opt/studyflow
-sudo install -d -o studyflow -g studyflow -m 700 /var/lib/studyflow
-git clone <URL_РЕПОЗИТОРИЯ> /opt/studyflow
-cd /opt/studyflow
+cd /root/stydy-flow
 npm ci --include=dev
 npm run build
+mkdir -p /var/lib/studyflow
+chmod 700 /var/lib/studyflow
 ```
 
-Пользователь `studyflow` создаётся один раз. Если он уже существует, пропустите `useradd`. Код остаётся у пользователя, который выполняет деплой; отдельный сервис имеет право записи только в каталог данных. При ошибках сборки better-sqlite3 могут потребоваться `python3`, `make` и `g++` (`sudo apt install build-essential python3`).
+При ошибках сборки better-sqlite3 могут потребоваться `python3`, `make` и `g++` (`apt install build-essential python3`).
 
 ## 3. Production-переменные
 
 ```bash
-cd /opt/studyflow
+cd /root/stydy-flow
 cp .env.production.example .env
 node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"
 nano .env
@@ -58,8 +56,7 @@ SESSION_SECRET=ВСТАВЬТЕ_СГЕНЕРИРОВАННОЕ_СЛУЧАЙНО�
 `APP_ORIGIN` должен совпадать с публичным HTTPS-адресом, без завершающего `/`. Он участвует в проверке запросов входа и сохранения данных. Секрет храните неизменным между обычными перезапусками, чтобы не сбрасывать сессии.
 
 ```bash
-sudo chown root:studyflow /opt/studyflow/.env
-sudo chmod 640 /opt/studyflow/.env
+chmod 600 /root/stydy-flow/.env
 ```
 
 Не добавляйте `.env` в Git.
@@ -70,7 +67,7 @@ sudo chmod 640 /opt/studyflow/.env
 
 ```bash
 npm run db:backup -- ./backups/transfer.sqlite
-scp ./backups/transfer.sqlite <SSH_USER>@<VPS_IP>:~/studyflow-transfer.sqlite
+scp ./backups/transfer.sqlite root@<VPS_IP>:/root/studyflow-transfer.sqlite
 ```
 
 Команда использует SQLite backup API и корректно работает с включённым WAL. Файл содержит персональные данные и хеши паролей. Для повторного снимка выберите другое имя: существующая копия не перезаписывается.
@@ -78,30 +75,72 @@ scp ./backups/transfer.sqlite <SSH_USER>@<VPS_IP>:~/studyflow-transfer.sqlite
 На VPS **до первого запуска сервиса**, если целевого файла базы ещё нет:
 
 ```bash
-sudo test ! -e /var/lib/studyflow/studyflow.sqlite && sudo install -o studyflow -g studyflow -m 600 ~/studyflow-transfer.sqlite /var/lib/studyflow/studyflow.sqlite
+test ! -e /var/lib/studyflow/studyflow.sqlite && install -m 600 /root/studyflow-transfer.sqlite /var/lib/studyflow/studyflow.sqlite
 ```
 
 Если база уже существует, остановитесь: сначала сделайте её резервную копию и решите, какую базу сохранять. Не заменяйте файл работающей базы и не копируйте один `.sqlite` из WAL-базы вручную.
 
 Если переносить данные не требуется, пропустите этот шаг: сервер создаст новую базу и публичный учебный план автоматически. Созданные локально аккаунты в новой базе отсутствуют; системный автор нового плана по умолчанию не имеет доступного пароля.
 
-## 5. Запустить через systemd
+## 5. Запустить через PM2
+
+Если ранее запускали именно `studyflow.service` из предыдущей инструкции, сначала отключите только его:
 
 ```bash
-cd /opt/studyflow
-sudo install -m 644 deploy/studyflow.service /etc/systemd/system/studyflow.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now studyflow
-sudo systemctl status studyflow --no-pager
+systemctl disable --now studyflow.service
+```
+
+Если такого сервиса нет, этот шаг пропустите. Существующий systemd-сервис самого PM2 отключать не нужно.
+
+Проверьте порт и текущие приложения:
+
+```bash
+ss -ltnp 'sport = :3007'
+pm2 ls
+```
+
+Порт должен быть свободен перед первым запуском StudyFlow. Если процесс `studyflow` уже есть в PM2, используйте команду restart ниже вместо start.
+
+```bash
+cd /root/stydy-flow
+pm2 start ecosystem.config.cjs --only studyflow
+pm2 status studyflow
+pm2 logs studyflow --lines 80
+```
+
+Просмотр логов завершайте Ctrl+C: приложение продолжит работать. Проверка HTTP:
+
+```bash
 curl -I http://127.0.0.1:3007/
 curl http://127.0.0.1:3007/api/calendars
 ```
 
-Миграции применяются при старте сервера. Сервис перезапускается при падении и запускается после перезагрузки VPS. При ошибке:
+Конфигурация запускает один экземпляр backend в fork-режиме из каталога `back/`, с `NODE_ENV=production`, без слежения за файлами. Express раздаёт собранный frontend и API. Переменные читаются из корневого `.env`; после его изменения перезапускайте через ecosystem-файл:
 
 ```bash
-sudo journalctl -u studyflow -n 100 --no-pager
+pm2 restart ecosystem.config.cjs --only studyflow --update-env
 ```
+
+Миграции базы применяются при старте. PM2 перезапускает упавшее приложение и даёт ему до 30 секунд на корректное завершение при остановке.
+
+Когда StudyFlow работает, проверьте `pm2 ls` и сохраните список процессов:
+
+```bash
+pm2 save
+```
+
+Если автозапуск PM2 уже настроен для root, повторно настраивать его не нужно. Иначе выполните `pm2 startup` и следуйте выведенной команде. PM2 может использовать systemd для собственного автозапуска — отдельный `studyflow.service` при этом не нужен.
+
+Управление только этим приложением:
+
+```bash
+pm2 status studyflow
+pm2 logs studyflow --lines 100
+pm2 stop studyflow
+pm2 restart ecosystem.config.cjs --only studyflow --update-env
+```
+
+Не используйте `pm2 restart all`, `pm2 delete all` или `pm2 kill`: на сервере есть другие приложения.
 
 ## 6. Подключить Nginx
 
@@ -110,11 +149,11 @@ sudo journalctl -u studyflow -n 100 --no-pager
 Если домен ещё не настроен в Nginx:
 
 ```bash
-cd /opt/studyflow
-sudo install -m 644 deploy/nginx.conf /etc/nginx/sites-available/go.its-403.ru
-sudo ln -s /etc/nginx/sites-available/go.its-403.ru /etc/nginx/sites-enabled/go.its-403.ru
-sudo nginx -t
-sudo systemctl reload nginx
+cd /root/stydy-flow
+install -m 644 deploy/nginx.conf /etc/nginx/sites-available/go.its-403.ru
+ln -s /etc/nginx/sites-available/go.its-403.ru /etc/nginx/sites-enabled/go.its-403.ru
+nginx -t
+systemctl reload nginx
 ```
 
 Выполняйте reload только после успешного `nginx -t`. Конфигурация обслуживает конкретный домен и не меняет `default_server` или конфигурации соседних сервисов. Проксируется весь сайт, включая `/api`, `/studio` и `/progress`; Express сам раздаёт frontend и обрабатывает SPA-маршруты.
@@ -124,17 +163,17 @@ sudo systemctl reload nginx
 Если сертификат для этого домена ещё не установлен, используйте уже установленный на VPS Certbot. Если Certbot отсутствует, установите его и плагин Nginx способом для вашей ОС; для Ubuntu/Debian с apt:
 
 ```bash
-sudo apt update
-sudo apt install certbot python3-certbot-nginx
+apt update
+apt install certbot python3-certbot-nginx
 ```
 
 Не устанавливайте второй экземпляр Certbot через apt, если уже используется snap или другой способ. Затем:
 
 ```bash
-sudo certbot --nginx -d go.its-403.ru --redirect
-sudo nginx -t
-sudo systemctl reload nginx
-sudo certbot renew --dry-run
+certbot --nginx -d go.its-403.ru --redirect
+nginx -t
+systemctl reload nginx
+certbot renew --dry-run
 ```
 
 Завершите запросы Certbot по email и условиям использования. Проверьте автоматическое продление существующим механизмом Certbot (systemd timer или cron), не дублируя уже настроенный.
@@ -152,18 +191,19 @@ curl -I https://go.its-403.ru/
 curl https://go.its-403.ru/api/calendars
 ```
 
-Перед обновлением сделайте резервную копию. Этот пример исполняется от обычного пользователя деплоя, который скачивал репозиторий:
+Перед обновлением сделайте резервную копию. Команды на VPS выполняются от root:
 
 ```bash
-cd /opt/studyflow
-sudo -u studyflow /usr/bin/node scripts/backup-db.mjs /var/lib/studyflow/before-update.sqlite
+cd /root/stydy-flow
+npm run db:backup
 git pull --ff-only
 npm ci --include=dev
 npm run build
-sudo systemctl restart studyflow
-sudo systemctl status studyflow --no-pager
+pm2 restart ecosystem.config.cjs --only studyflow --update-env
+pm2 status studyflow
+pm2 save
 ```
 
-Каждой копии давайте новое имя; `before-update.sqlite` выше — пример для одного обновления. В production база находится вне репозитория, `/var/lib/studyflow/studyflow.sqlite`, и остаётся на месте при обновлении кода. Не пересоздавайте `.env` и не меняйте `SESSION_SECRET` при обычном обновлении.
+Команда резервного копирования без аргументов создаёт файл с датой и временем в `backups/`. В production база находится вне репозитория, `/var/lib/studyflow/studyflow.sqlite`, и остаётся на месте при обновлении кода. Не пересоздавайте `.env` и не меняйте `SESSION_SECRET` при обычном обновлении.
 
-Если Node в другом месте, замените `/usr/bin/node` также в команде резервного копирования.
+Не запускайте `npm start` параллельно с PM2: оба процесса попытаются занять порт 3007.

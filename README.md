@@ -32,7 +32,7 @@ npm run build
 
 Все данные и сессии физически хранятся в SQLite и переживают перезапуск. Foreign keys, WAL и busy_timeout включены. Миграции версионируются в `migrations`; запускаются также при старте backend. Для резервного копирования используйте SQLite backup API, а не копирование только основного файла при работающем WAL.
 
-Инструкция для VPS и домена `go.its-403.ru`: [docs/deployment.md](docs/deployment.md). Готовые конфигурации находятся в `deploy/`.
+Инструкция для VPS и домена `go.its-403.ru`: [docs/deployment.md](docs/deployment.md). Запуск через PM2 из `/root/stydy-flow` описан в этой инструкции. Конфигурация процесса — `ecosystem.config.cjs`, Nginx — `deploy/nginx.conf`.
 
 ## Два пространства
 
