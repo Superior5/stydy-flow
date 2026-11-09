@@ -1,0 +1,25 @@
+[Unit]
+Description=StudyFlow web application
+After=network.target
+
+[Service]
+Type=simple
+User=studyflow
+Group=studyflow
+WorkingDirectory=/opt/studyflow/back
+EnvironmentFile=/opt/studyflow/.env
+ExecStart=/usr/bin/node /opt/studyflow/back/dist/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+StateDirectory=studyflow
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/studyflow
+
+[Install]
+WantedBy=multi-user.target

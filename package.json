@@ -1,39 +1,26 @@
 {
-  "name": "@studyflow/back",
+  "name": "studyflow",
   "private": true,
   "version": "1.0.0",
-  "type": "module",
+  "workspaces": [
+    "front",
+    "back"
+  ],
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc",
-    "typecheck": "tsc --noEmit",
-    "db:migrate": "tsx src/db/migrate.ts",
-    "start": "node dist/server.js",
-    "test": "vitest run"
-  },
-  "dependencies": {
-    "express": "^5.1.0",
-    "better-sqlite3": "^12.4.1",
-    "drizzle-orm": "^0.44.7",
-    "zod": "^4.1.12",
-    "bcrypt": "^6.0.0",
-    "express-session": "^1.18.2",
-    "helmet": "^8.1.0",
-    "express-rate-limit": "^8.2.1",
-    "luxon": "^3.7.2",
-    "dotenv": "^17.2.3"
+    "dev": "concurrently -k -n api,web -c green,blue \"npm run dev -w back\" \"npm run dev -w front\"",
+    "db:backup": "node scripts/backup-db.mjs",
+    "db:migrate": "npm run db:migrate -w back",
+    "build": "npm run build --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm run test -w back",
+    "start": "npm run start -w back"
   },
   "devDependencies": {
-    "typescript": "^5.9.3",
-    "tsx": "^4.20.6",
-    "vitest": "^3.2.4",
-    "supertest": "^7.1.4",
-    "@types/supertest": "^6.0.3",
-    "@types/express": "^5.0.5",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/bcrypt": "^6.0.0",
-    "@types/express-session": "^1.18.2",
-    "@types/luxon": "^3.7.1",
-    "@types/node": "^24.10.0"
+    "concurrently": "^9.2.1"
+  },
+  "overrides": {
+    "@types/estree": "1.0.9",
+    "rollup": "4.66.0",
+    "vue": "3.5.44"
   }
 }
