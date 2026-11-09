@@ -1,0 +1,1 @@
+ALTER TABLE calendars ADD COLUMN curriculum_version INTEGER NOT NULL DEFAULT 0;
