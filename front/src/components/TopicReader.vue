@@ -20,9 +20,15 @@ const personalText = ref(""),
   savingNote = ref(false),
   noteError = ref(""),
   noteLoaded = ref(false),
+  notePreview = ref(false),
   updatedAt = ref<string | null>(null),
   discardPrompt = ref(false);
 const dirty = computed(() => personalText.value !== savedText.value);
+const renderedPersonalNote = computed(() =>
+  DOMPurify.sanitize(
+    marked.parse(personalText.value, { async: false, gfm: true }) as string,
+  ),
+);
 let noteRequest = 0;
 function requestClose() {
   if (savingNote.value) return;
@@ -38,6 +44,7 @@ async function loadNote() {
   updatedAt.value = null;
   noteError.value = "";
   noteLoaded.value = false;
+  notePreview.value = false;
   loadingNote.value = !!auth.user;
   if (!auth.user) return;
   try {
@@ -46,6 +53,7 @@ async function loadNote() {
     personalText.value = savedText.value = note.text;
     updatedAt.value = note.updatedAt;
     noteLoaded.value = true;
+    notePreview.value = !!note.text.trim();
   } catch (e) {
     if (request === noteRequest) noteError.value = (e as Error).message;
   } finally {
@@ -67,6 +75,7 @@ async function saveNote() {
     savedText.value = note.text;
     personalText.value = note.text;
     updatedAt.value = note.updatedAt;
+    notePreview.value = !!note.text.trim();
     discardPrompt.value = false;
   } catch (e) {
     noteError.value = (e as Error).message;
@@ -195,15 +204,50 @@ async function toggle() {
               Загружаем заметку…
             </p>
             <template v-else>
-              <textarea
-                v-if="noteLoaded"
-                v-model="personalText"
-                aria-label="Личная заметка к теме"
-                rows="6"
-                maxlength="100000"
-                :disabled="savingNote"
-                placeholder="Что стоит запомнить? Какие вопросы остались?"
-              />
+              <template v-if="noteLoaded">
+                <div class="personal-note-toolbar">
+                  <span class="muted">Markdown</span>
+                  <button
+                    type="button"
+                    class="text-button"
+                    :aria-pressed="notePreview"
+                    aria-controls="personal-note-content"
+                    @click="notePreview = !notePreview"
+                  >
+                    {{ notePreview ? "Редактировать" : "Предпросмотр" }}
+                  </button>
+                </div>
+                <div id="personal-note-content">
+                  <div
+                    v-if="notePreview && personalText.trim()"
+                    class="markdown-preview personal-note-preview"
+                    aria-label="Предпросмотр личной заметки"
+                    v-html="renderedPersonalNote"
+                  ></div>
+                  <p v-else-if="notePreview" class="personal-note-empty muted">
+                    Здесь появится ваша заметка.
+                  </p>
+                  <textarea
+                    v-else
+                    v-model="personalText"
+                    aria-label="Личная заметка к теме"
+                    aria-describedby="personal-note-help"
+                    rows="8"
+                    maxlength="100000"
+                    :disabled="savingNote"
+                    placeholder="Что стоит запомнить? Какие вопросы остались?"
+                  />
+                </div>
+                <small
+                  v-if="!notePreview"
+                  id="personal-note-help"
+                  class="field-help"
+                >
+                  Markdown: # заголовок, **жирный**, - список,
+                  [ссылка](https://…), `код` и блоки кода в тройных обратных
+                  кавычках.
+                </small>
+              </template>
               <p v-if="noteError" class="personal-note-error" role="alert">
                 {{ noteError }}
               </p>

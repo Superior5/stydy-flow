@@ -3965,7 +3965,7 @@ html {
   border-radius: 10px;
   background: var(--surface-soft);
 }
-.personal-note-section h3 {
+.personal-note-section > h3 {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3979,6 +3979,67 @@ html {
 .personal-note-section textarea {
   min-height: 125px;
   resize: vertical;
+}
+.personal-note-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  font-size: 11px;
+}
+.personal-note-preview,
+.personal-note-empty {
+  min-height: 125px;
+  background: var(--input);
+}
+.personal-note-preview {
+  overflow-x: auto;
+}
+.personal-note-preview :is(h1, h2, h3, h4, h5, h6) {
+  line-height: 1.5;
+  margin: 14px 0 8px;
+  font-weight: 600;
+}
+.personal-note-preview h1 {
+  font-size: 22px;
+}
+.personal-note-preview h2 {
+  font-size: 18px;
+}
+.personal-note-preview h3 {
+  font-size: 15px;
+}
+.personal-note-preview > :first-child {
+  margin-top: 0;
+}
+.personal-note-preview > :last-child {
+  margin-bottom: 0;
+}
+.personal-note-preview blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+  margin: 12px 0;
+  color: var(--muted);
+}
+.personal-note-preview table {
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+.personal-note-preview :is(th, td) {
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+}
+.personal-note-preview input[type="checkbox"] {
+  display: inline-block;
+  width: auto;
+  margin: 0 5px 0 0;
+}
+.personal-note-empty {
+  margin-top: 8px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
 }
 .personal-note-actions {
   display: flex;
