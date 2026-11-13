@@ -83,7 +83,7 @@ async function toggle(topic: Topic) {
             :key="topic.id"
             :topic="topic"
             :editing="calendar.editing"
-            :busy="calendar.toggling.has(topic.id)"
+            :busy="calendar.isBusy(topic.id)"
             @open="open"
             @toggle="toggle"
           />

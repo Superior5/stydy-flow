@@ -68,11 +68,29 @@ export function statistics(
   start: string,
   now: Date = new Date(),
 ) {
+  const personal = c.db
+    .select()
+    .from(topicProgress)
+    .where(eq(topicProgress.userId, userId))
+    .all();
   const owned = c.db
     .select()
     .from(topics)
     .where(eq(topics.userId, userId))
-    .all();
+    .all()
+    .map((topic) => {
+      const progress = personal.find((p) => p.topicId === topic.id);
+      return progress
+        ? {
+            ...topic,
+            scheduledDate:
+              progress.scheduledDate || topic.planDate || topic.scheduledDate,
+            status: progress.completedAt ? "completed" : "pending",
+            completedAt: progress.completedAt,
+            personalHistory: progress.history,
+          }
+        : { ...topic, personalHistory: "[]" };
+    });
   const joined = c.db
     .select({ topic: topics, progress: topicProgress })
     .from(topicProgress)
@@ -105,7 +123,7 @@ export function statistics(
       .all()
       .map((t) => t.topicId),
   );
-  for (const topic of joined) {
+  for (const topic of [...owned, ...joined]) {
     const history = JSON.parse(topic.personalHistory) as {
       kind: string;
       toDate: string;

@@ -66,7 +66,10 @@ watch(
         today: day.date === calendar.week?.today,
         past: day.date < (calendar.week?.today || ''),
         'mobile-selected': selected === day.date,
+        'topic-drop-target': calendar.dropDate === day.date,
+        'topic-drop-available': calendar.canDrop(day.date),
       }"
+      :data-topic-drop-date="day.date"
     >
       <header class="day-header">
         <div class="day-name">
@@ -99,7 +102,7 @@ watch(
           v-for="topic in day.topics"
           :key="topic.id"
           :topic="topic"
-          :busy="calendar.toggling.has(topic.id)"
+          :busy="calendar.isBusy(topic.id)"
           :editing="calendar.editing"
           @open="$emit('open', $event)"
           @toggle="calendar.toggle"

@@ -16,6 +16,7 @@ import {
   transfers,
   resources,
   personalNotes,
+  topicProgress,
 } from "../src/db/schema.js";
 const origin = "http://localhost:5173";
 let c: Connection, app: ReturnType<typeof createApp>, now: Date;
@@ -596,6 +597,186 @@ describe("Public calendars and creator permissions", () => {
     expect(topic.status).toBe(201);
     return { owner, calendar: cal.body, topic: topic.body };
   }
+  it("moves only the learner's date, keeps notes, and preserves the creator's shared plan", async () => {
+    const { owner, calendar, topic } = await shared();
+    const a = await account("schedule-a@example.test"),
+      b = await account("schedule-b@example.test");
+    const path = `/api/calendars/${calendar.id}/topics/${topic.id}`;
+    await mutate(a.agent, a.csrf, `${path}/personal-note`, "patch")
+      .send({ text: "Личный конспект" })
+      .expect(200);
+    await a.agent.get(path).expect(200);
+    await b.agent.get(path).expect(200);
+    const canonical = c.db
+      .select()
+      .from(topics)
+      .where(eq(topics.id, topic.id))
+      .get();
+    const moved = await mutate(a.agent, a.csrf, `${path}/schedule`, "patch")
+      .send({ date: "2026-11-20" })
+      .expect(200);
+    expect(moved.body.scheduledDate).toBe("2026-11-20");
+    expect(moved.body.history).toContainEqual(
+      expect.objectContaining({
+        fromDate: "2026-11-12",
+        toDate: "2026-11-20",
+        kind: "manual",
+        personal: true,
+      }),
+    );
+    expect((await a.agent.get(`${path}/personal-note`)).body.text).toBe(
+      "Личный конспект",
+    );
+    for (const agent of [b.agent, owner.agent, request.agent(app)]) {
+      const other = (await agent.get(path)).body;
+      expect(other.scheduledDate).toBe("2026-11-12");
+      expect(other.history).not.toContainEqual(
+        expect.objectContaining({ toDate: "2026-11-20" }),
+      );
+    }
+    expect(
+      c.db.select().from(topics).where(eq(topics.id, topic.id)).get(),
+    ).toEqual(canonical);
+    const oldWeek = await a.agent.get(
+      `/api/calendars/${calendar.id}/range?start=2026-11-09&end=2026-11-16`,
+    );
+    const newWeek = await a.agent.get(
+      `/api/calendars/${calendar.id}/range?start=2026-11-16&end=2026-11-23`,
+    );
+    expect(oldWeek.body.topics).toHaveLength(0);
+    expect(oldWeek.body.transfers).toContainEqual(
+      expect.objectContaining({ toDate: "2026-11-20", personal: true }),
+    );
+    expect(newWeek.body.topics.map((t: { id: string }) => t.id)).toEqual([
+      topic.id,
+    ]);
+    // The creator's personal date must use the same overlay as a learner's.
+    await mutate(owner.agent, owner.csrf, `${path}/schedule`, "patch")
+      .send({ date: "2026-11-21" })
+      .expect(200);
+    expect(
+      (await owner.agent.get(`${path}?mode=edit`)).body.scheduledDate,
+    ).toBe("2026-11-12");
+    expect(
+      c.db.select().from(topics).where(eq(topics.id, topic.id)).get(),
+    ).toEqual(canonical);
+    expect(
+      statistics(c, owner.user.id, "Europe/Moscow", "2026-11-16", now).planned,
+    ).toBe(1);
+    expect(
+      statistics(c, owner.user.id, "Europe/Moscow", "2026-11-09", now).planned,
+    ).toBe(0);
+  });
+  it("preserves completion, makes repeated moves idempotent and keeps automatic midnight carryover", async () => {
+    const { calendar, topic } = await shared();
+    const a = await account("schedule-done@example.test");
+    const path = `/api/calendars/${calendar.id}/topics/${topic.id}`;
+    await mutate(a.agent, a.csrf, `${path}/complete`, "patch")
+      .send({})
+      .expect(200);
+    const completedAt = (await a.agent.get(path)).body.completedAt;
+    for (let i = 0; i < 2; i++) {
+      const moved = await mutate(a.agent, a.csrf, `${path}/schedule`, "patch")
+        .send({ date: "2026-11-20" })
+        .expect(200);
+      expect(moved.body.status).toBe("completed");
+      expect(moved.body.completedAt).toBe(completedAt);
+      expect(
+        moved.body.history.filter((h: { kind: string }) => h.kind === "manual"),
+      ).toHaveLength(1);
+    }
+    await mutate(a.agent, a.csrf, `${path}/schedule`, "patch")
+      .send({ date: "2026-11-12" })
+      .expect(200);
+    const repeatedRoute = await mutate(
+      a.agent,
+      a.csrf,
+      `${path}/schedule`,
+      "patch",
+    )
+      .send({ date: "2026-11-20" })
+      .expect(200);
+    expect(
+      repeatedRoute.body.history.filter(
+        (h: { kind: string }) => h.kind === "manual",
+      ),
+    ).toHaveLength(3);
+    await mutate(a.agent, a.csrf, `${path}/schedule`, "patch")
+      .send({ date: "2026-11-08" })
+      .expect(200);
+    expect((await a.agent.get(path)).body.completedAt).toBe(completedAt);
+    await mutate(a.agent, a.csrf, `${path}/reopen`, "patch")
+      .send({})
+      .expect(200);
+    await mutate(a.agent, a.csrf, `${path}/schedule`, "patch")
+      .send({ date: "2026-11-20" })
+      .expect(200);
+    now = new Date("2026-11-20T21:00:00Z"); // Midnight in Moscow.
+    const carried = (await a.agent.get(path)).body;
+    expect(carried.status).toBe("pending");
+    expect(carried.scheduledDate).toBe("2026-11-21");
+    expect(carried.history).toContainEqual(
+      expect.objectContaining({
+        fromDate: "2026-11-20",
+        toDate: "2026-11-21",
+        kind: "auto",
+        personal: true,
+      }),
+    );
+  });
+  it("requires login, CSRF, valid local dates and access to the requested topic for scheduling", async () => {
+    const { owner, calendar, topic } = await shared();
+    const reader = await account("schedule-security@example.test"),
+      guest = request.agent(app);
+    const path = `/api/calendars/${calendar.id}/topics/${topic.id}/schedule`;
+    const csrf = (await guest.get("/api/auth/csrf")).body.csrfToken;
+    await mutate(guest, csrf, path, "patch")
+      .send({ date: "2026-11-20" })
+      .expect(401);
+    await reader.agent
+      .patch(path)
+      .set("Origin", origin)
+      .send({ date: "2026-11-20" })
+      .expect(403);
+    for (const body of [
+      { date: "2026-11-08" },
+      { date: "2026-02-30" },
+      { date: "2026-11-20T00:00:00Z" },
+      { date: "2201-01-01" },
+      { date: "2026-11-20", userId: owner.user.id },
+    ])
+      await mutate(reader.agent, reader.csrf, path, "patch")
+        .send(body)
+        .expect(400);
+    expect(c.db.select().from(topicProgress).all()).toHaveLength(0);
+    await mutate(
+      reader.agent,
+      reader.csrf,
+      `/api/calendars/${calendar.id}/topics/missing/schedule`,
+      "patch",
+    )
+      .send({ date: "2026-11-20" })
+      .expect(404);
+    // "Today" is taken in the learner's timezone, not in UTC.
+    now = new Date("2026-11-09T21:05:00Z");
+    await mutate(reader.agent, reader.csrf, path, "patch")
+      .send({ date: "2026-11-09" })
+      .expect(400);
+    await mutate(reader.agent, reader.csrf, path, "patch")
+      .send({ date: "2026-11-10" })
+      .expect(200);
+    await mutate(
+      owner.agent,
+      owner.csrf,
+      `/api/calendars/${calendar.id}`,
+      "patch",
+    )
+      .send({ isPublic: false })
+      .expect(200);
+    await mutate(reader.agent, reader.csrf, path, "patch")
+      .send({ date: "2026-11-20" })
+      .expect(404);
+  });
   it("keeps personal notes isolated from other learners, the creator and shared responses", async () => {
     const { owner, calendar, topic } = await shared();
     const a = await account("notes-a@example.test"),

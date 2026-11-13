@@ -12,6 +12,7 @@ import TopicDrawer from "../components/TopicDrawer.vue";
 import TopicReader from "../components/TopicReader.vue";
 import CalendarDialog from "../components/CalendarDialog.vue";
 import Icon from "../components/Icon.vue";
+import TopicScheduleDialog from "../components/TopicScheduleDialog.vue";
 import AppSelect from "../components/AppSelect.vue";
 import type { Topic, CalendarInfo } from "../types";
 const route = useRoute(),
@@ -88,6 +89,9 @@ function add(date: string) {
   selectedTopic.value = null;
   selectedDate.value = date;
   editorOpen.value = true;
+}
+function scheduled(topic: Topic) {
+  if (readerTopic.value?.id === topic.id) readerTopic.value = topic;
 }
 async function open(topic: Topic) {
   try {
@@ -425,6 +429,10 @@ onBeforeUnmount(() => {
           @open="open"
           @add="add" /><WeeklyCalendar v-else @open="open" @add="add"
       /></template>
+      <p v-if="calendar.week && !editing" class="calendar-move-help">
+        <Icon name="grip" :size="14" />Перетаскивайте темы между днями или
+        выбирайте дату кнопкой календаря в теме.
+      </p>
       <div v-else class="calendar-loading">
         <Icon v-if="calendar.loading" name="loader" class="spin" /><span>{{
           calendar.loading
@@ -460,5 +468,10 @@ onBeforeUnmount(() => {
     :kind="dialog"
     @close="dialog = null"
     @created="created"
+  />
+  <TopicScheduleDialog
+    v-if="calendar.scheduleRequest"
+    :request="calendar.scheduleRequest"
+    @saved="scheduled"
   />
 </template>

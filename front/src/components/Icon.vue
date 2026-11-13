@@ -31,6 +31,7 @@ import {
   Clock,
   UserRound,
   CheckCheck,
+  GripVertical,
 } from "lucide-vue-next";
 const props = withDefaults(defineProps<{ name: string; size?: number }>(), {
   size: 20,
@@ -66,6 +67,7 @@ const icons: Record<string, typeof BookOpen> = {
   clock: Clock,
   user: UserRound,
   done: CheckCheck,
+  grip: GripVertical,
 };
 const icon = computed(() => icons[props.name] || BookOpen);
 </script>

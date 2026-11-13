@@ -72,7 +72,10 @@ watch(
           today: day.date === calendar.week?.today,
           outside: day.outside,
           selected: selected === day.date,
+          'topic-drop-target': calendar.dropDate === day.date,
+          'topic-drop-available': calendar.canDrop(day.date),
         }"
+        :data-topic-drop-date="day.date"
       >
         <header class="month-day-header">
           <button
@@ -105,7 +108,7 @@ watch(
             :topic="topic"
             :editing="calendar.editing"
             :compact="true"
-            :busy="calendar.toggling.has(topic.id)"
+            :busy="calendar.isBusy(topic.id)"
             @open="$emit('open', $event)"
             @toggle="calendar.toggle"
           />
@@ -155,7 +158,7 @@ watch(
       :key="topic.id"
       :topic="topic"
       :editing="calendar.editing"
-      :busy="calendar.toggling.has(topic.id)"
+      :busy="calendar.isBusy(topic.id)"
       @open="$emit('open', $event)"
       @toggle="calendar.toggle"
     />

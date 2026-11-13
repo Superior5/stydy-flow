@@ -251,14 +251,20 @@ export function calendarRoutes(c: Connection, clock: () => Date) {
             .where(eq(transfers.topicId, t.id))
             .all()
             .filter((h) => h.kind === "manual" || (isOwner && !edit)),
-          ...(!edit && personal ? JSON.parse(personal.history) : []),
+          ...(!edit && personal
+            ? JSON.parse(personal.history).map(
+                (h: Record<string, unknown>) => ({ ...h, personal: true }),
+              )
+            : []),
         ].filter(
           (entry, index, array) =>
+            entry.kind === "manual" ||
             array.findIndex(
               (h) =>
                 h.fromDate === entry.fromDate &&
                 h.toDate === entry.toDate &&
-                h.kind === entry.kind,
+                h.kind === entry.kind &&
+                (entry.kind !== "manual" || !!h.personal === !!entry.personal),
             ) === index,
         );
         return {
@@ -395,6 +401,79 @@ export function calendarRoutes(c: Connection, clock: () => Date) {
     const topic = list.find((t) => t.id === String(req.params.topicId));
     if (!topic) fail(404, "Тема не найдена");
     res.json(topic);
+  });
+  router.patch("/:calendarId/topics/:topicId/schedule", (req, res) => {
+    const u = requireUser(req),
+      calendar = accessible(req);
+    const input = z.object({ date }).strict().parse(req.body);
+    const topic = c.db
+      .select()
+      .from(topics)
+      .where(
+        and(
+          eq(topics.id, String(req.params.topicId)),
+          eq(topics.calendarId, calendar.id),
+        ),
+      )
+      .get();
+    if (!topic) fail(404, "Тема не найдена");
+    c.sqlite.transaction(() => {
+      const identity = and(
+        eq(topicProgress.userId, u.id),
+        eq(topicProgress.topicId, topic!.id),
+      );
+      const previous = c.db.select().from(topicProgress).where(identity).get();
+      const completedAt = previous
+        ? previous.completedAt
+        : calendar.ownerId === u.id
+          ? topic!.completedAt
+          : null;
+      const today = localDate(u.timezone, clock());
+      if (!completedAt && input.date < today)
+        fail(
+          400,
+          "Незавершённую тему можно перенести только на сегодня или будущую дату",
+        );
+      let fromDate =
+        previous?.scheduledDate || topic!.planDate || topic!.scheduledDate;
+      const history = JSON.parse(previous?.history || "[]") as {
+        id: string;
+        topicId: string;
+        fromDate: string;
+        toDate: string;
+        kind: "auto" | "manual";
+        createdAt: string;
+      }[];
+      const addHistory = (toDate: string, kind: "auto" | "manual") => {
+        history.push({
+          id: randomUUID(),
+          topicId: topic!.id,
+          fromDate,
+          toDate,
+          kind,
+          createdAt: clock().toISOString(),
+        });
+        fromDate = toDate;
+      };
+      if (!completedAt && fromDate < today) addHistory(today, "auto");
+      if (fromDate !== input.date) addHistory(input.date, "manual");
+      c.db
+        .insert(topicProgress)
+        .values({
+          userId: u.id,
+          topicId: topic!.id,
+          completedAt,
+          scheduledDate: input.date,
+          history: JSON.stringify(history),
+        })
+        .onConflictDoUpdate({
+          target: [topicProgress.userId, topicProgress.topicId],
+          set: { scheduledDate: input.date, history: JSON.stringify(history) },
+        })
+        .run();
+    })();
+    // Use the same personal representation as the calendar, including shared resources/history.
+    res.json(content(req).list.find((t) => t.id === topic!.id));
   });
   // Personal notes never enter the shared topic payload; identity comes only from the session.
   for (const method of ["get", "patch"] as const)

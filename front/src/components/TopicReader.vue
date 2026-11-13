@@ -60,9 +60,11 @@ async function loadNote() {
     if (request === noteRequest) loadingNote.value = false;
   }
 }
-watch(() => [auth.user?.id, calendar.calendarId, props.topic.id], loadNote, {
-  immediate: true,
-});
+watch(
+  [() => auth.user?.id, () => calendar.calendarId, () => props.topic.id],
+  loadNote,
+  { immediate: true },
+);
 async function saveNote() {
   if (savingNote.value || !noteLoaded.value || !auth.user) return;
   savingNote.value = true;
@@ -147,6 +149,14 @@ async function toggle() {
             }}</span
           >
         </div>
+        <button
+          type="button"
+          class="button reader-schedule-button"
+          :disabled="calendar.isBusy(current.id)"
+          @click="calendar.openSchedule(current)"
+        >
+          <Icon name="calendar" :size="16" />Перенести в моём плане
+        </button>
         <div v-if="discardPrompt" class="personal-note-discard" role="alert">
           <p>В заметке есть несохранённые изменения.</p>
           <button
@@ -287,7 +297,9 @@ async function toggle() {
                 }}<small>{{
                   h.kind === "auto"
                     ? "Автоматический перенос"
-                    : "Автор изменил дату"
+                    : h.personal
+                      ? "Вы перенесли тему"
+                      : "Автор изменил дату"
                 }}</small>
               </div>
             </div>
@@ -297,7 +309,7 @@ async function toggle() {
           <span class="muted">Отметка видна только вам</span
           ><button
             class="button primary"
-            :disabled="calendar.toggling.has(current.id)"
+            :disabled="calendar.isBusy(current.id)"
             @click="toggle"
           >
             <Icon

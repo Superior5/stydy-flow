@@ -18,6 +18,7 @@ export interface Transfer {
   kind: "auto" | "manual";
   createdAt: string;
   title?: string;
+  personal?: boolean;
 }
 export interface Topic {
   id: string;

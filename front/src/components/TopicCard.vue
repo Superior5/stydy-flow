@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { startTopicPointerDrag } from "../composables/topicPointerDrag";
+import { useCalendar } from "../composables/calendar";
 import type { Topic } from "../types";
 import Icon from "./Icon.vue";
 const props = defineProps<{
@@ -8,7 +10,36 @@ const props = defineProps<{
   editing?: boolean;
   compact?: boolean;
 }>();
-defineEmits<{ open: [topic: Topic]; toggle: [topic: Topic] }>();
+const emit = defineEmits<{ open: [topic: Topic]; toggle: [topic: Topic] }>();
+const calendar = useCalendar();
+let ignoreClickUntil = 0;
+const card = ref<HTMLElement | null>(null);
+function open() {
+  if (Date.now() >= ignoreClickUntil) emit("open", props.topic);
+}
+let cancelDrag: (() => void) | undefined;
+function startDrag(event: PointerEvent) {
+  if (props.editing || props.busy || !card.value) return;
+  cancelDrag?.();
+  cancelDrag = startTopicPointerDrag(event, card.value, {
+    start: () => calendar.beginDrag(props.topic),
+    hover: calendar.hoverDate,
+    drop: (date) => void calendar.dropTopic(date),
+    cancel: calendar.endDrag,
+    finish: (moved) => {
+      if (moved) ignoreClickUntil = Date.now() + 250;
+      cancelDrag = undefined;
+    },
+  });
+}
+watch(
+  () => calendar.dragging,
+  (dragging) => {
+    if (!dragging) cancelDrag?.();
+  },
+  { flush: "sync" },
+);
+onBeforeUnmount(() => cancelDrag?.());
 const carried = computed(() =>
   props.topic.history.some((h) => h.kind === "auto"),
 );
@@ -27,27 +58,58 @@ const category = computed(() => {
 </script>
 <template>
   <article
+    ref="card"
     class="topic-card"
     :class="{
       completed: topic.status === 'completed',
       carried,
       compact,
       'editable-card': editing,
+      'has-drag-handle': !editing,
+      'dragging-card': calendar.dragging?.topic.id === topic.id,
     }"
-    @click="$emit('open', topic)"
+    :aria-busy="busy"
+    @click="open"
   >
+    <button
+      v-if="!editing"
+      type="button"
+      class="topic-drag-handle"
+      :disabled="busy"
+      :aria-label="`Перенести тему «${topic.title}»`"
+      title="Перетащите на другую дату или нажмите для выбора даты"
+      @pointerdown.stop="startDrag"
+      @dragstart.prevent
+      @click.stop="
+        Date.now() >= ignoreClickUntil && calendar.openSchedule(topic)
+      "
+    >
+      <Icon name="grip" :size="compact ? 12 : 13" />
+    </button>
     <div v-if="!compact" class="topic-card-top">
       <span
         class="topic-category"
         :class="{ backend: category.includes('Backend') }"
         >{{ category }}</span
-      ><button
-        class="topic-menu icon-button"
-        aria-label="Открыть тему"
-        @click.stop="$emit('open', topic)"
-      >
-        <Icon :name="editing ? 'settings' : 'more'" :size="16" />
-      </button>
+      ><span class="topic-card-actions">
+        <button
+          v-if="!editing"
+          type="button"
+          class="topic-schedule-button icon-button"
+          :aria-label="`Перенести тему «${topic.title}»`"
+          title="Изменить личную дату"
+          :disabled="busy"
+          @click.stop="calendar.openSchedule(topic)"
+        >
+          <Icon name="calendar" :size="15" />
+        </button>
+        <button
+          class="topic-menu icon-button"
+          aria-label="Открыть тему"
+          @click.stop="open"
+        >
+          <Icon :name="editing ? 'settings' : 'more'" :size="16" /></button
+      ></span>
     </div>
     <div class="topic-title-row">
       <button
@@ -71,7 +133,7 @@ const category = computed(() => {
       ><button
         class="topic-title"
         :title="compact ? topic.title : undefined"
-        @click.stop="$emit('open', topic)"
+        @click.stop="open"
       >
         {{ topic.title }}
       </button>

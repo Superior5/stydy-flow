@@ -17,6 +17,12 @@ export const useCalendar = defineStore("calendar", () => {
     loading = ref(false),
     loadError = ref("");
   const now = ref(DateTime.now());
+  const moving = ref(new Set<string>());
+  const scheduleRequest = ref<{ topic: Topic; calendarId: string } | null>(
+    null,
+  );
+  const dragging = ref<{ topic: Topic; calendarId: string } | null>(null);
+  const dropDate = ref("");
   let sequence = 0;
   const today = computed(() =>
     now.value
@@ -59,6 +65,9 @@ export const useCalendar = defineStore("calendar", () => {
       week.value = null;
       calendars.value = [];
       toggling.value.clear();
+      moving.value.clear();
+      scheduleRequest.value = null;
+      endDrag();
     },
   );
   async function catalog() {
@@ -66,7 +75,11 @@ export const useCalendar = defineStore("calendar", () => {
       await api<{ calendars: CalendarInfo[] }>("/calendars")
     ).calendars;
   }
-  async function load(sync = true) {
+  watch([calendarId, editing, view, start], () => {
+    scheduleRequest.value = null;
+    endDrag();
+  });
+  async function load(sync = true, keepContent = false) {
     now.value = DateTime.now();
     if (!start.value) reset();
     const request = ++sequence;
@@ -102,7 +115,7 @@ export const useCalendar = defineStore("calendar", () => {
       if (request === sequence) week.value = result;
     } catch (e) {
       if (request === sequence) {
-        week.value = null;
+        if (!keepContent) week.value = null;
         loadError.value = (e as Error).message;
         ui.notify(loadError.value, true);
       }
@@ -124,6 +137,123 @@ export const useCalendar = defineStore("calendar", () => {
     await load();
   }
   const toggling = ref(new Set<string>());
+  const isBusy = (id: string) => moving.value.has(id) || toggling.value.has(id);
+  function canSchedule(t: Topic, date: string) {
+    const parsed = DateTime.fromISO(date);
+    return (
+      parsed.isValid &&
+      /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+      date >= "1900-01-01" &&
+      date <= "2200-12-31" &&
+      (t.status === "completed" || date >= today.value)
+    );
+  }
+  function openSchedule(t: Topic) {
+    if (editing.value || isBusy(t.id)) return;
+    const target = calendarId.value;
+    if (
+      !auth.requireLogin(async () => {
+        if (target !== calendarId.value || editing.value) return;
+        try {
+          const fresh = await api<Topic>(`/calendars/${target}/topics/${t.id}`);
+          if (target === calendarId.value && !editing.value)
+            scheduleRequest.value = { topic: fresh, calendarId: target };
+        } catch (e) {
+          ui.notify((e as Error).message, true);
+        }
+      }, "Войдите, чтобы планировать личные даты обучения")
+    )
+      return;
+    scheduleRequest.value = { topic: t, calendarId: target };
+  }
+  async function reschedule(
+    t: Topic,
+    date: string,
+  ): Promise<Topic | undefined> {
+    if (editing.value || isBusy(t.id)) return;
+    const target = calendarId.value;
+    if (
+      !auth.requireLogin(async () => {
+        if (target !== calendarId.value || editing.value) return;
+        try {
+          const fresh = await api<Topic>(`/calendars/${target}/topics/${t.id}`);
+          await reschedule(fresh, date);
+        } catch (e) {
+          ui.notify((e as Error).message, true);
+        }
+      }, "Войдите, чтобы переносить темы в своём календаре")
+    )
+      return;
+    now.value = DateTime.now();
+    if (!canSchedule(t, date))
+      throw new Error("Незавершённую тему нельзя перенести в прошлое");
+    if (date === t.scheduledDate) return t;
+    const userId = auth.user!.id;
+    moving.value.add(t.id);
+    try {
+      const updated = await api<Topic>(
+        `/calendars/${target}/topics/${t.id}/schedule`,
+        "PATCH",
+        { date },
+      );
+      if (
+        userId !== auth.user?.id ||
+        target !== calendarId.value ||
+        editing.value
+      )
+        return;
+      Object.assign(t, updated);
+      const visible = week.value?.topics.find((topic) => topic.id === t.id);
+      if (visible && visible !== t) Object.assign(visible, updated);
+      await load(false, true);
+      if (userId !== auth.user?.id || target !== calendarId.value) return;
+      ui.notify(
+        `Тема перенесена на ${DateTime.fromISO(date).setLocale("ru").toFormat("d MMMM yyyy")} — только в вашем плане`,
+      );
+      return updated;
+    } catch (e) {
+      ui.notify((e as Error).message, true);
+      throw e;
+    } finally {
+      moving.value.delete(t.id);
+    }
+  }
+  function beginDrag(topic: Topic) {
+    if (editing.value || isBusy(topic.id)) return false;
+    dragging.value = { topic, calendarId: calendarId.value };
+    return true;
+  }
+  function endDrag() {
+    dragging.value = null;
+    dropDate.value = "";
+  }
+  function canDrop(date: string) {
+    const item = dragging.value;
+    return (
+      !!item &&
+      !editing.value &&
+      item.calendarId === calendarId.value &&
+      !isBusy(item.topic.id) &&
+      item.topic.scheduledDate !== date &&
+      canSchedule(item.topic, date)
+    );
+  }
+  function hoverDate(date: string) {
+    dropDate.value = canDrop(date) ? date : "";
+  }
+  async function dropTopic(date: string) {
+    if (!canDrop(date)) {
+      endDrag();
+      return;
+    }
+    const topic = dragging.value!.topic;
+    endDrag();
+    try {
+      await reschedule(topic, date);
+    } catch {
+      /* Error is reported by reschedule. */
+    }
+  }
   async function toggle(t: Topic) {
     if (editing.value) return;
     const targetCalendarId = calendarId.value;
@@ -148,7 +278,7 @@ export const useCalendar = defineStore("calendar", () => {
       })
     )
       return;
-    if (toggling.value.has(t.id)) return;
+    if (isBusy(t.id)) return;
     toggling.value.add(t.id);
     const previous = t.status;
     t.status = previous === "completed" ? "pending" : "completed";
@@ -189,6 +319,19 @@ export const useCalendar = defineStore("calendar", () => {
     setView,
     toggle,
     toggling,
+    moving,
+    isBusy,
+    scheduleRequest,
+    openSchedule,
+    reschedule,
+    canSchedule,
+    dragging,
+    dropDate,
+    beginDrag,
+    endDrag,
+    canDrop,
+    hoverDate,
+    dropTopic,
     reset,
   };
 });
